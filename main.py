@@ -1,11 +1,34 @@
 import streamlit as st
 from openai import OpenAI
+import base64
+from PIL import Image
+import io
 
-# 必要なモジュールのインポート
-from openai_client import OpenAIClient
-from serializer import serialize
-from database_handler import DatabaseHandler
-from streamlit_interface import initialize_session_state, display_chat, add_user_message, add_assistant_message
+
+# セッション状態の初期化関数
+def initialize_session_state():
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+
+# ユーザーメッセージを追加する関数
+def add_user_message(content):
+    st.session_state.messages.append({"role": "user", "content": content})
+
+# アシスタントメッセージを追加する関数
+def add_assistant_message(content):
+    st.session_state.messages.append({"role": "assistant", "content": content})
+
+# チャットメッセージを表示する関数
+def display_chat():
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            st.write(f"**ユーザー:** {message['content']}")
+        else:
+            st.write(f"**アシスタント:** {message['content']}")
+
+# ファイルをBase64エンコードする関数
+def encode_image(image_file):
+    return base64.b64encode(image_file.read()).decode('utf-8')
 
 # Streamlitアプリのタイトルを設定する
 st.title("説明ボット")
@@ -16,40 +39,52 @@ initialize_session_state()
 # これまでのメッセージを表示
 display_chat()
 
+# 画像ファイルのアップロードウィジェットを表示
+uploaded_file = st.file_uploader("画像をアップロードしてください", type=["png", "jpg", "jpeg"])
+
+if uploaded_file is not None:
+    # 画像を表示
+    st.image(uploaded_file, caption='アップロードされた画像', use_column_width=True)
+
+    # 画像をBase64形式にエンコード
+    base64_image = encode_image(uploaded_file)
+
+    # ユーザーメッセージを追加
+    add_user_message("この画像は何を意味していますか?")
+
+    # Chat Completions APIを呼び出す
+    response = client.chat.completions.create(
+        model="gpt-4-turbo",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "この画像は何を意味していますか?"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                ]
+            }
+        ]
+    )
+
+    # アシスタントメッセージを追加
+    add_assistant_message(response.choices[0].message.content)
+
+    # チャットメッセージを再表示
+    display_chat()
+
 # ユーザーが新しいメッセージを入力できるテキストボックス
 if prompt := st.chat_input("質問やメッセージを入力してください"):
     # ユーザーメッセージを追加
     add_user_message(prompt)
-    
-    # OpenAI クライアントの初期化と埋め込み生成
-    openai_client = OpenAIClient(model="text-embedding-3-large")
-    query_embedding = openai_client.generate_embedding(prompt)
-    serialized_embedding = serialize(query_embedding)
 
-    # データベースの操作
-    db_handler = DatabaseHandler("example_vec.db")
-    db_handler.connect()
-    results = db_handler.search_recipes(serialized_embedding)
-    db_handler.close()
-
-    # レシピ検索結果をセッションに追加
-    message = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
-    message.insert(
-        0,
-        {
-            "role": "system",
-            "content": f"# レシピ検索結果\n {results} \nこれはレシピ検索結果です。これに基づいて質問に答えます。レシピ検索結果がない場合は、「データにありません」を出力します。",
-        },
+    # Chat Completions APIを呼び出す
+    response = client.chat.completions.create(
+        model="gpt-4-turbo",
+        messages=st.session_state.messages
     )
-
-    # OpenAI APIを使用してアシスタントの応答を取得
-    client = OpenAI()
-    stream = client.chat.completions.create(
-        model=st.session_state["openai_model"],
-        messages=message,
-        stream=True,
-    )
-    response = st.write_stream(stream)
 
     # アシスタントメッセージを追加
-    add_assistant_message(response)
+    add_assistant_message(response.choices[0].message.content)
+
+    # チャットメッセージを再表示
+    display_chat()
